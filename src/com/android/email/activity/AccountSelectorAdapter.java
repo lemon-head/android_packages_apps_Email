@@ -114,7 +114,6 @@ public class AccountSelectorAdapter extends CursorAdapter {
         mResourceHelper = ResourceHelper.getInstance(context);
     }
 
-    @Override
     /**
      * {@inheritDoc}
      *
@@ -132,36 +131,42 @@ public class AccountSelectorAdapter extends CursorAdapter {
      * if a particular row is "show all folders" verify that a) it's not an account row and
      * b) it's ID is {@link Mailbox#NO_MAILBOX}.
      *
+     * TODO Use recycled views.  ({@link #getViewTypeCount} and {@link #getItemViewType})
      */
-    public View newView(Context context, Cursor cursor, ViewGroup parent) {
-        View view;
-        if (cursor.getInt(cursor.getColumnIndex(ROW_TYPE)) == ROW_TYPE_HEADER) {
-            view = mInflater.inflate(R.layout.action_bar_spinner_dropdown_header, parent, false);
-        } else {
-            view = mInflater.inflate(R.layout.action_bar_spinner_dropdown, parent, false);
-        }
-        return view;
-    }
-
     @Override
-    public void bindView(View view, Context context, Cursor cursor) {
-        if (cursor.getInt(cursor.getColumnIndex(ROW_TYPE)) == ROW_TYPE_HEADER) {
+    public View getView(int position, View convertView, ViewGroup parent) {
+        Cursor c = getCursor();
+        c.moveToPosition(position);
+        View view;
+        if (c.getInt(c.getColumnIndex(ROW_TYPE)) == ROW_TYPE_HEADER) {
+            view = mInflater.inflate(R.layout.action_bar_spinner_dropdown_header, parent, false);
             final TextView displayNameView = (TextView) view.findViewById(R.id.display_name);
-            final String displayName = getDisplayName(cursor);
+            final String displayName = getDisplayName(c);
             displayNameView.setText(displayName);
         } else {
+            view = mInflater.inflate(R.layout.action_bar_spinner_dropdown, parent, false);
             final TextView displayNameView = (TextView) view.findViewById(R.id.display_name);
             final TextView emailAddressView = (TextView) view.findViewById(R.id.email_address);
             final TextView unreadCountView = (TextView) view.findViewById(R.id.unread_count);
             final View chipView = view.findViewById(R.id.color_chip);
 
-            final String displayName = getDisplayName(cursor);
-            final String emailAddress = getAccountEmailAddress(cursor);
+            // Reset the display name of combined view for locale reason.
+            // We need to translate the display name of "Combined view" in
+            // different language.
+            String displayName;
+            if (getId(c) == Account.ACCOUNT_ID_COMBINED_VIEW) {
+                displayName = mContext.getResources().getString(
+                              R.string.mailbox_list_account_selector_combined_view);
+            } else {
+                displayName = getDisplayName(c);
+            }
+
+            final String emailAddress = getAccountEmailAddress(c);
 
             displayNameView.setText(displayName);
 
             // Show the email address only when it's different from the display name.
-            boolean isAccount = isAccountItem(cursor);
+            boolean isAccount = isAccountItem(c);
             if (displayName.equals(emailAddress) || !isAccount) {
                 emailAddressView.setVisibility(View.GONE);
             } else {
@@ -169,16 +174,16 @@ public class AccountSelectorAdapter extends CursorAdapter {
                 emailAddressView.setText(emailAddress);
             }
 
-            long id = getId(cursor);
+            long id = getId(c);
             if (isAccount || id != Mailbox.NO_MAILBOX) {
                 unreadCountView.setVisibility(View.VISIBLE);
                 unreadCountView.setText(UiUtilities.getMessageCountForUi(mContext,
-                        getAccountUnreadCount(cursor), true));
+                        getAccountUnreadCount(c), true));
 
                 // If we're on a combined account, show the color chip indicators for all real
                 // accounts so it can be used as a legend.
                 boolean isCombinedActive =
-                        ((CursorWithExtras) cursor).getAccountId() == Account.ACCOUNT_ID_COMBINED_VIEW;
+                        ((CursorWithExtras) c).getAccountId() == Account.ACCOUNT_ID_COMBINED_VIEW;
 
                 if (isCombinedActive && Account.isNormalAccount(id)) {
                     chipView.setBackgroundColor(mResourceHelper.getAccountColor(id));
@@ -191,6 +196,17 @@ public class AccountSelectorAdapter extends CursorAdapter {
                 chipView.setVisibility(View.GONE);
             }
         }
+        return view;
+    }
+
+    @Override
+    public View newView(Context context, Cursor cursor, ViewGroup parent) {
+        return null; // we don't reuse views.  This method never gets called.
+    }
+
+    @Override
+    public void bindView(View view, Context context, Cursor cursor) {
+        // we don't reuse views.  This method never gets called.
     }
 
     @Override
@@ -282,10 +298,9 @@ public class AccountSelectorAdapter extends CursorAdapter {
 
     private static String sCombinedViewDisplayName;
     private static String getCombinedViewDisplayName(Context c) {
-        if (sCombinedViewDisplayName == null) {
-            sCombinedViewDisplayName = c.getResources().getString(
-                    R.string.mailbox_list_account_selector_combined_view);
-        }
+        // Get the combined view display name every time for locale reason.
+        sCombinedViewDisplayName = c.getResources().getString(
+                R.string.mailbox_list_account_selector_combined_view);
         return sCombinedViewDisplayName;
     }
 
@@ -534,11 +549,13 @@ public class AccountSelectorAdapter extends CursorAdapter {
             if (mMailboxId == Mailbox.NO_MAILBOX) {
                 return;
             }
+
             // Combined mailbox?
             // Unfortunately this can happen even when account != ACCOUNT_ID_COMBINED_VIEW,
-            // when you open "starred" on 2-pane on non-combined view.
+            // when you open "starred" on non-combined view.
             if (mMailboxId < 0) {
-                setCombinedMailboxInfo(context, mailboxId);
+                // Set starred mailbox info for special account.
+                setFavoriteMailboxInfo(context, accountId, mailboxId);
                 return;
             }
 
@@ -565,6 +582,15 @@ public class AccountSelectorAdapter extends CursorAdapter {
 
             mMailboxMessageCount = FolderProperties.getMessageCountForCombinedMailbox(
                     context, mailboxId);
+        }
+
+        private void setFavoriteMailboxInfo(Context context, long accountId, long mailboxId) {
+            Preconditions.checkState(mailboxId < -1, "Not combined mailbox");
+            mMailboxDisplayName = FolderProperties.getInstance(context)
+                    .getCombinedMailboxName(mMailboxId);
+
+            mMailboxMessageCount = FolderProperties.getFavoriteMessageCount(
+                    context, accountId, mMailboxId);
         }
 
         /**
